@@ -1,0 +1,324 @@
+"use client";
+
+import Link from "next/link";
+import { useState, useEffect } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { User } from "@supabase/supabase-js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import {
+  ChevronDown,
+  UserCircle2,
+  LayoutDashboard,
+  LogOut,
+  UserIcon,
+  Calendar,
+  UserCircleIcon as UserProfileIcon,
+  Calendar1,
+  Clock, // Icono para el checador
+} from "lucide-react";
+import { areReservationsEnabled } from "@/lib/actions/configuration.actions";
+import { isUserInAttendanceList } from "@/lib/actions/attendance.actions";
+
+export function AuthButton({ mobileView = false }: { mobileView?: boolean }) {
+  const supabase = createClient();
+  const [user, setUser] = useState<User | null>(null);
+  const [dashboardAccess, setDashboardAccess] = useState(false);
+  const [reservationsEnabled, setReservationsEnabled] = useState(false);
+  const [isInAttendanceList, setIsInAttendanceList] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUserAndConfig = async () => {
+      // 1. Obtener la sesión de forma inmediata
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.user) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      const userData = session.user;
+      setUser(userData);
+
+      // 2. Ejecutar todas las llamadas de datos en paralelo
+      // No bloqueamos el seteo del usuario inicial
+      try {
+        const [accessResult, enabled, inList] = await Promise.all([
+          supabase
+            .from('users')
+            .select(`
+              profiles!users_profile_id_fkey!inner(
+                permissions_profiles!inner(
+                  active,
+                  permissions!inner(code)
+                )
+              )
+            `)
+            .eq('id', userData.id)
+            .eq('profiles.permissions_profiles.permissions.code','access:dashboard')
+            .eq('profiles.permissions_profiles.active', true)
+            .limit(1)
+            .maybeSingle(),
+          areReservationsEnabled(),
+          isUserInAttendanceList(userData.id)
+        ]);
+
+        setDashboardAccess(!!accessResult.data);
+        setReservationsEnabled(enabled);
+        setIsInAttendanceList(inList);
+      } catch (error) {
+        console.error("Error en carga paralela:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserAndConfig();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchUserAndConfig();
+      } else {
+        setUser(null);
+        setDashboardAccess(false);
+        setReservationsEnabled(false);
+        setIsInAttendanceList(false);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/";
+  };
+
+  if (loading && !user) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-10 w-[140px] animate-pulse bg-white border-2 border-[#B48993] rounded-xl" />
+      </div>
+    );
+  }
+
+  if (user) {
+    if (mobileView) {
+      return (
+        <div className="space-y-2 bg-white px-2 py-2 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-3 px-3 py-3 border-b border-[#B48993] bg-white rounded-xl">
+            <UserIcon className="h-5 w-5 text-[#A65B6F]" />
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold text-[#40222D]">
+                Mi cuenta
+              </span>
+              <span className="text-xs text-[#B48993] truncate">
+                {user.email}
+              </span>
+            </div>
+          </div>
+
+          <Link
+            href="/profile"
+            className="block py-3 pl-2 rounded-xl font-medium text-[#B48993] hover:bg-[#A65B6F]/10 hover:text-[#A65B6F] transition-colors"
+          >
+            Mi Perfil
+          </Link>
+
+          {isInAttendanceList && (
+            <Link
+              href="/checador"
+              className="block py-3 pl-2 rounded-xl font-medium text-[#B48993] hover:bg-[#A65B6F]/10 hover:text-[#A65B6F] transition-colors"
+            >
+              Checador
+            </Link>
+          )}
+
+          {/* <Link
+            href="/appointments/history"
+            className="block py-3 pl-2 rounded-lg font-medium text-[#B48993] hover:bg-[#A65B6F]/10 hover:text-[#A65B6F] transition-colors"
+          >
+            Mis citas
+          </Link> */}
+
+          {dashboardAccess && (
+            <Link
+              href="/dashboard"
+              className="block py-3 pl-2 rounded-lg font-medium text-[#B48993] hover:bg-[#A65B6F]/10 hover:text-[#A65B6F] transition-colors"
+            >
+              Panel de Control
+            </Link>
+          )}
+
+          <button
+            onClick={handleLogout}
+            className="w-full text-left py-3 pl-2 rounded-xl font-semibold text-[#A65B6F] hover:bg-[#A65B6F]/10 transition-colors"
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            className="flex items-center cursor-pointer gap-2 bg-white border-2 border-[#B48993] text-[#40222D] font-semibold rounded-xl px-3 sm:px-5 py-2 sm:py-2.5 hover:text-[#40222D] hover:border-[#A65B6F] hover:shadow-lg hover:shadow-[#A65B6F]/25 hover:scale-105 transition-all duration-300 group"
+          >
+            <div className="relative">
+              <UserCircle2 className="h-5 w-5 text-[#A65B6F] group-hover:text-[#40222D] transition-colors" />
+              <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white" />
+            </div>
+            <span className="hidden sm:inline">Mi cuenta</span>
+            <ChevronDown className="h-4 w-4 text-[#A65B6F] group-hover:text-[#40222D] transition-colors" />
+          </Button>
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent
+          align="end"
+          className="w-[calc(100vw-1rem)] sm:w-72 bg-white shadow-2xl border-2 border-[#B48993] rounded-2xl p-3 animate-in fade-in-0 zoom-in-95 sm:translate-x-0 translate-x-2 transition-transform duration-300 ease-out"
+        >
+          <DropdownMenuLabel className="flex items-start gap-3 px-3 py-3 bg-white rounded-xl mb-2 border border-[#B48993]">
+            <div className="flex items-center justify-center w-10 h-10 bg-[#A65B6F] rounded-full flex-shrink-0">
+              <UserIcon className="h-5 w-5 text-white" />
+            </div>
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-base font-bold text-[#40222D]">
+                Mi Cuenta
+              </span>
+              <span className="text-sm text-[#B48993] truncate">
+                {user.email}
+              </span>
+            </div>
+          </DropdownMenuLabel>
+
+          <DropdownMenuSeparator className="my-2 bg-[#B48993]" />
+
+          <DropdownMenuItem 
+            asChild
+            className="data-[highlighted]:bg-[#A65B6F]/10 data-[highlighted]:text-[#A65B6F]"
+          >
+            <Link
+              href="/profile"
+              className="flex items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[#A65B6F]/10 transition-colors duration-200 group"
+            >
+              <div className="flex items-center justify-center w-9 h-9 bg-[#B48993]/20 rounded-lg border border-[#A65B6F]/30 group-hover:bg-[#A65B6F]/20 transition-colors">
+                <UserProfileIcon className="h-5 w-5 text-[#A65B6F] group-hover:scale-110 transition-transform" />
+              </div>
+              <span className="font-semibold text-[#B48993] group-hover:text-[#A65B6F] text-base">
+                Mi Perfil
+              </span>
+            </Link>
+          </DropdownMenuItem>
+
+          {isInAttendanceList && (
+            <DropdownMenuItem 
+              asChild
+              className="data-[highlighted]:bg-[#A65B6F]/10 data-[highlighted]:text-[#A65B6F]"
+            >
+              <Link
+                href="/checador"
+                className="flex items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[#A65B6F]/10 transition-colors duration-200 group"
+              >
+                <div className="flex items-center justify-center w-9 h-9 bg-[#B48993]/20 rounded-lg border border-[#A65B6F]/30 group-hover:bg-[#A65B6F]/20 transition-colors">
+                  <Clock className="h-5 w-5 text-[#A65B6F] group-hover:scale-110 transition-transform" />
+                </div>
+                <span className="font-semibold text-[#B48993] group-hover:text-[#A65B6F] text-base">
+                  Checador
+                </span>
+              </Link>
+            </DropdownMenuItem>
+          )}
+
+          {/* <DropdownMenuItem 
+            asChild
+            className="data-[highlighted]:bg-[#A65B6F]/10 data-[highlighted]:text-[#A65B6F]"
+          >
+              <Link
+                href="/appointments/history"
+                className="flex items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[#A65B6F]/10 transition-colors duration-200 group"
+              >
+                <div className="flex items-center justify-center w-9 h-9 bg-[#B48993]/20 rounded-lg border border-[#A65B6F]/30 group-hover:bg-[#A65B6F]/20 transition-colors">
+                  <Calendar1 className="h-5 w-5 text-[#A65B6F] group-hover:scale-110 transition-transform" />
+                </div>
+                <span className="font-semibold text-[#B48993] group-hover:text-[#A65B6F] text-base">
+                  Mis citas
+                </span>
+              </Link>
+            </DropdownMenuItem>  */}
+
+          {dashboardAccess && (
+            <DropdownMenuItem 
+              asChild
+              className="data-[highlighted]:bg-[#A65B6F]/10 data-[highlighted]:text-[#A65B6F]"
+            >
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[#A65B6F]/10 transition-colors duration-200 group"
+              >
+                <div className="flex items-center justify-center w-9 h-9 bg-[#B48993]/20 rounded-lg border border-[#A65B6F]/30 group-hover:bg-[#A65B6F]/20 transition-colors">
+                  <LayoutDashboard className="h-5 w-5 text-[#A65B6F] group-hover:scale-110 transition-transform" />
+                </div>
+                <span className="font-semibold text-[#B48993] group-hover:text-[#A65B6F] text-base">
+                  Panel de control
+                </span>
+              </Link>
+            </DropdownMenuItem>
+          )}
+
+          <DropdownMenuSeparator className="my-2 bg-[#B48993]" />
+
+          <DropdownMenuItem
+            onClick={handleLogout}
+            className="flex items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[#A65B6F]/10 data-[highlighted]:bg-[#A65B6F]/10 transition-colors duration-200 group"
+          >
+            <div className="flex items-center justify-center w-9 h-9 bg-[#A65B6F]/10 rounded-lg border border-[#A65B6F]/30">
+              <LogOut className="h-5 w-5 text-[#A65B6F] group-hover:scale-110 transition-transform" />
+            </div>
+            <span className="font-bold text-[#A65B6F] text-base">
+              Cerrar sesión
+            </span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 md:flex-row md:gap-2">
+      <Button
+        asChild
+        size="default"
+        variant="outline"
+        className="w-full md:w-auto text-[#A65B6F] font-semibold px-4 py-2 hover:text-[#40222D] hover:bg-white hover:scale-105 transition-all duration-300 shadow-xs border-[#B48993]"
+      >
+        <Link href="/auth/login">Iniciar sesión</Link>
+      </Button>
+
+      <Link href="/auth/sign-up">
+        <Button
+          size="default"
+          className="w-full md:w-auto rounded-md bg-[#A65B6F] px-6 py-3 text-sm font-semibold text-white shadow-lg transition-all duration-300 hover:bg-[#40222D] hover:scale-105"
+        >
+          Registrarse
+        </Button>
+      </Link>
+    </div>
+  );
+}
